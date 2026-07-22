@@ -1,0 +1,13 @@
+query,expected_source
+Where are the store locations?,store_locations.pdf
+What does warranty cover?,warranty_and_service.pdf
+How do I use the Velvera watch?,watch_usage_guide.pdf
+What phones are in the catalog?,phone_catalog.pdf
+What are the current promotional offers?,promotional_offers.pdf
+How do I book for corporate customers?,corporate_booking.pdf
+What is Velvera's environmental policy?,environmental_policy.pdf
+What are the terms and conditions?,terms_and_conditions.pdf
+How do I charge my device?,usage_guide_chargers.pdf
+What tablets are available?,tablet_catalog.pdf
+How do I get my device serviced?,servicing_details.pdf
+What is the software upgrade policy?,software_upgrade_policy.pdf
