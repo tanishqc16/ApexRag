@@ -5,6 +5,10 @@ from ranx import Qrels, Run, evaluate
 
 from embedder import Embedder
 from searcher import Searcher
+from bm25_searcher import BM25Searcher
+from hybrid import reciprocal_rank_fusion
+from query_expansion import QueryExpander
+from parent_child import map_to_parents
 from reranker import Reranker
 
 CACHE_DIR = Path("cache")
@@ -40,24 +44,56 @@ def results_to_run_scores(results):
     return scores
 
 
-def print_report(faiss_scores, rerank_scores):
+def is_pct_metric(metric):
+    return (
+        metric.startswith("hit_rate")
+        or metric.startswith("precision")
+        or metric.startswith("recall")
+    )
+
+
+def format_val(metric, value):
+    if is_pct_metric(metric):
+        return f"{value:>9.2%}"
+    return f"{value:>10.3f}"
+
+
+def format_delta(metric, value):
+    if is_pct_metric(metric):
+        return f"{value:>+9.2%}"
+    return f"{value:>+10.3f}"
+
+
+def print_report(faiss_scores, rerank_scores, hybrid_scores, expand_scores, parent_scores):
     print("\n=== ranx Evaluation Summary ===\n")
-    header = f"{'Metric':<14} {'FAISS':>10} {'Rerank':>10} {'Delta':>10}"
+    print("Delta = Parent-Child - FAISS (best vs baseline).\n")
+    header = (
+        f"{'Metric':<14} "
+        f"{'FAISS':>10} "
+        f"{'Reranking':>10} "
+        f"{'Hybrid':>10} "
+        f"{'QueryExp':>10} "
+        f"{'ParentChild':>12} "
+        f"{'Delta':>10}"
+    )
     print(header)
     print("-" * len(header))
 
     for metric in METRICS:
         faiss_val = float(faiss_scores[metric])
         rerank_val = float(rerank_scores[metric])
-        delta = rerank_val - faiss_val
-        if metric.startswith("hit_rate") or metric.startswith("precision") or metric.startswith("recall"):
-            print(
-                f"{metric:<14} {faiss_val:>9.2%} {rerank_val:>9.2%} {delta:>+9.2%}"
-            )
-        else:
-            print(
-                f"{metric:<14} {faiss_val:>10.3f} {rerank_val:>10.3f} {delta:>+10.3f}"
-            )
+        hybrid_val = float(hybrid_scores[metric])
+        expand_val = float(expand_scores[metric])
+        parent_val = float(parent_scores[metric])
+        print(
+            f"{metric:<14} "
+            f"{format_val(metric, faiss_val)} "
+            f"{format_val(metric, rerank_val)} "
+            f"{format_val(metric, hybrid_val)} "
+            f"{format_val(metric, expand_val)} "
+            f"{format_val(metric, parent_val)} "
+            f"{format_delta(metric, parent_val - faiss_val)}"
+        )
 
 
 def main():
@@ -72,7 +108,14 @@ def main():
 
     print(f"Loading cache from {CACHE_DIR}/")
     searcher = Searcher.load(CACHE_DIR)
+    if searcher.chunks and "parent_id" not in searcher.chunks[0]:
+        raise ValueError(
+            "Cache has no parent-child metadata. Re-run python main.py to rebuild."
+        )
+
+    bm25 = BM25Searcher(searcher.chunks)
     embedder = Embedder()
+    expander = QueryExpander()
     reranker = Reranker()
 
     print(f"Evaluating {len(questions)} questions with ranx...\n")
@@ -80,6 +123,9 @@ def main():
     qrels_dict = {}
     faiss_run_dict = {}
     rerank_run_dict = {}
+    hybrid_run_dict = {}
+    expand_run_dict = {}
+    parent_run_dict = {}
 
     for i, row in enumerate(questions):
         qid = f"q{i}"
@@ -87,28 +133,63 @@ def main():
         expected = row["expected_source"].strip()
 
         query_embedding = embedder.embed(query)
-        candidates = searcher.search(query_embedding, top_k=CANDIDATE_K)
-        faiss_top = candidates[:TOP_K]
-        reranked = reranker.rerank(query, candidates, top_k=TOP_K)
+        dense_hits = searcher.search(query_embedding, top_k=CANDIDATE_K)
+        sparse_hits = bm25.search(query, top_k=CANDIDATE_K)
+
+        faiss_top = dense_hits[:TOP_K]
+        reranked = reranker.rerank(query, dense_hits, top_k=TOP_K)
+
+        hybrid_candidates = reciprocal_rank_fusion(
+            [dense_hits, sparse_hits], top_k=CANDIDATE_K
+        )
+        hybrid_reranked = reranker.rerank(query, hybrid_candidates, top_k=TOP_K)
+
+        expanded = expander.expand(query)
+        expand_dense = searcher.search(
+            embedder.embed(expanded["rewritten"]), top_k=CANDIDATE_K
+        )
+        expand_sparse = bm25.search(expanded["sparse_query"], top_k=CANDIDATE_K)
+        expand_candidates = reciprocal_rank_fusion(
+            [expand_dense, expand_sparse], top_k=CANDIDATE_K
+        )
+        expand_reranked = reranker.rerank(query, expand_candidates, top_k=TOP_K)
+
+        parent_child_hits = reranker.rerank(query, expand_candidates, top_k=10)
+        parent_results = map_to_parents(parent_child_hits, top_k=TOP_K)
 
         qrels_dict[qid] = {expected: 1}
         faiss_run_dict[qid] = results_to_run_scores(faiss_top)
         rerank_run_dict[qid] = results_to_run_scores(reranked)
+        hybrid_run_dict[qid] = results_to_run_scores(hybrid_reranked)
+        expand_run_dict[qid] = results_to_run_scores(expand_reranked)
+        parent_run_dict[qid] = results_to_run_scores(parent_results)
 
         print(f"Q: {query}")
-        print(f"   Expected: {expected}")
-        print(f"   FAISS:    {list(faiss_run_dict[qid].keys())}")
-        print(f"   Rerank:   {list(rerank_run_dict[qid].keys())}")
+        print(f"   Expanded:     {expanded['rewritten']}")
+        print(f"   Expected:     {expected}")
+        print(f"   FAISS:        {list(faiss_run_dict[qid].keys())}")
+        print(f"   Reranking:    {list(rerank_run_dict[qid].keys())}")
+        print(f"   Hybrid:       {list(hybrid_run_dict[qid].keys())}")
+        print(f"   QueryExp:     {list(expand_run_dict[qid].keys())}")
+        print(f"   ParentChild:  {list(parent_run_dict[qid].keys())}")
         print()
 
     qrels = Qrels(qrels_dict)
     faiss_run = Run(faiss_run_dict, name="FAISS")
-    rerank_run = Run(rerank_run_dict, name="FAISS+Rerank")
+    rerank_run = Run(rerank_run_dict, name="Reranking")
+    hybrid_run = Run(hybrid_run_dict, name="Hybrid")
+    expand_run = Run(expand_run_dict, name="QueryExpansion")
+    parent_run = Run(parent_run_dict, name="ParentChild")
 
     faiss_scores = evaluate(qrels, faiss_run, METRICS)
     rerank_scores = evaluate(qrels, rerank_run, METRICS)
+    hybrid_scores = evaluate(qrels, hybrid_run, METRICS)
+    expand_scores = evaluate(qrels, expand_run, METRICS)
+    parent_scores = evaluate(qrels, parent_run, METRICS)
 
-    print_report(faiss_scores, rerank_scores)
+    print_report(
+        faiss_scores, rerank_scores, hybrid_scores, expand_scores, parent_scores
+    )
 
 
 if __name__ == "__main__":
