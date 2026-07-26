@@ -1,13 +1,23 @@
-query,expected_source
-Where are the store locations?,store_locations.pdf
-What does warranty cover?,warranty_and_service.pdf
-How do I use the Velvera watch?,watch_usage_guide.pdf
-What phones are in the catalog?,phone_catalog.pdf
-What are the current promotional offers?,promotional_offers.pdf
-How do I book for corporate customers?,corporate_booking.pdf
-What is Velvera's environmental policy?,environmental_policy.pdf
-What are the terms and conditions?,terms_and_conditions.pdf
-How do I charge my device?,usage_guide_chargers.pdf
-What tablets are available?,tablet_catalog.pdf
-How do I get my device serviced?,servicing_details.pdf
-What is the software upgrade policy?,software_upgrade_policy.pdf
+query,expected_source,type,related_sources
+Where are the store locations?,store_locations.pdf,single_hop,
+What does warranty cover?,warranty_and_service.pdf,single_hop,
+How do I use the Velvera watch?,watch_usage_guide.pdf,single_hop,
+What phones are in the catalog?,phone_catalog.pdf,single_hop,
+What are the current promotional offers?,promotional_offers.pdf,single_hop,
+How do I book for corporate customers?,corporate_booking.pdf,single_hop,
+What is Velvera's environmental policy?,environmental_policy.pdf,single_hop,
+What are the terms and conditions?,terms_and_conditions.pdf,single_hop,
+How do I charge my device?,usage_guide_chargers.pdf,single_hop,
+What tablets are available?,tablet_catalog.pdf,single_hop,
+How do I get my device serviced?,servicing_details.pdf,single_hop,
+What is the software upgrade policy?,software_upgrade_policy.pdf,single_hop,
+What warranty applies to Velvera One Pro and which policy doc covers it?,product_policy_links.pdf,multi_hop,"phone_catalog.pdf;warranty_and_service.pdf"
+Which stores demo Velvera One Ultra and where is Mumbai service support?,product_store_service_map.pdf,multi_hop,"store_locations.pdf;servicing_details.pdf;phone_catalog.pdf"
+What products are in the Ultimate Power Kit and what warranty lengths apply?,promo_product_eligibility.pdf,multi_hop,"promotional_offers.pdf;warranty_and_service.pdf;phone_catalog.pdf"
+Is Creator Pro Pack covered for both phone and tablet warranty periods?,promo_product_eligibility.pdf,multi_hop,"promotional_offers.pdf;warranty_and_service.pdf;tablet_catalog.pdf"
+Which service center should Mumbai buyers use and what express repair series qualify?,product_store_service_map.pdf,multi_hop,"servicing_details.pdf;warranty_and_service.pdf;store_locations.pdf"
+What links Velvera Pad Pro to accessories and tablet warranty?,product_policy_links.pdf,multi_hop,"tablet_catalog.pdf;accessories.pdf;warranty_and_service.pdf"
+Which promo includes Velvera Nexus and what software policy applies?,promo_product_eligibility.pdf,multi_hop,"promotional_offers.pdf;software_upgrade_policy.pdf"
+Where can I buy Velvera Watch Pro in Bengaluru and what warranty category is it?,product_store_service_map.pdf,multi_hop,"store_locations.pdf;warranty_and_service.pdf;promotional_offers.pdf"
+Do student Edge kits get the same audio warranty as phones?,promo_product_eligibility.pdf,multi_hop,"promotional_offers.pdf;warranty_and_service.pdf;audio_catalog.pdf"
+For corporate tablet booking which docs apply besides retail promos?,product_policy_links.pdf,multi_hop,"corporate_booking.pdf;promotional_offers.pdf;terms_and_conditions.pdf"

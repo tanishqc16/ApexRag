@@ -9,12 +9,15 @@ from bm25_searcher import BM25Searcher
 from hybrid import reciprocal_rank_fusion
 from query_expansion import QueryExpander
 from parent_child import map_to_parents
+from graph_builder import build_graph, KnowledgeGraph
+from graph_retriever import GraphRetriever
 from reranker import Reranker
 
 DATA_DIR = Path("Dataset")
 CACHE_DIR = Path("cache")
 META_PATH = CACHE_DIR / "meta.json"
-CACHE_SCHEMA = "parent_child_v1"
+GRAPH_PATH = CACHE_DIR / "graph.json"
+CACHE_SCHEMA = "parent_child_graph_v1"
 
 
 def dataset_signature(pdf_paths):
@@ -32,6 +35,8 @@ def cache_is_valid(pdf_paths):
     if not (CACHE_DIR / "index.faiss").exists():
         return False
     if not (CACHE_DIR / "chunks.json").exists():
+        return False
+    if not GRAPH_PATH.exists():
         return False
     if not META_PATH.exists():
         return False
@@ -64,16 +69,20 @@ def build_index(pdf_paths):
     embedder = Embedder()
     chunk_embeddings = embedder.embed([chunk["text"] for chunk in chunks])
     searcher = Searcher(chunk_embeddings, chunks)
-
     searcher.save(CACHE_DIR)
+
+    graph = build_graph(chunks)
+    graph.save(GRAPH_PATH)
+    print(f"Built graph: {len(graph.nodes)} nodes, {len(graph.edges)} edges")
+
     with open(META_PATH, "w", encoding="utf-8") as f:
         json.dump(
             {"schema": CACHE_SCHEMA, "files": dataset_signature(pdf_paths)},
             f,
         )
 
-    print(f"Saved index to {CACHE_DIR}/")
-    return searcher, embedder
+    print(f"Saved index + graph to {CACHE_DIR}/")
+    return searcher, embedder, graph
 
 
 def run():
@@ -85,12 +94,17 @@ def run():
         print(f"Loading cached index from {CACHE_DIR}/")
         searcher = Searcher.load(CACHE_DIR)
         embedder = Embedder()
-        print(f"Loaded {len(searcher.chunks)} child chunks from cache")
+        graph = KnowledgeGraph.load(GRAPH_PATH)
+        print(
+            f"Loaded {len(searcher.chunks)} child chunks, "
+            f"{len(graph.nodes)} graph nodes"
+        )
     else:
         print("Cache missing, outdated, or Dataset changed — building index...")
-        searcher, embedder = build_index(pdf_paths)
+        searcher, embedder, graph = build_index(pdf_paths)
 
     bm25 = BM25Searcher(searcher.chunks)
+    graph_retriever = GraphRetriever(graph, searcher.chunks, max_hops=2)
     expander = QueryExpander()
     reranker = Reranker()
 
@@ -101,10 +115,17 @@ def run():
     print(f"  Rewritten: {expanded['rewritten']}")
     print(f"  Keywords:  {', '.join(expanded['keywords'])}")
 
+    seeds = graph_retriever.find_seed_entities(query)
+    print(f"  Graph seeds: {len(seeds)}")
+
     query_embedding = embedder.embed(expanded["rewritten"])
     dense_hits = searcher.search(query_embedding, top_k=20)
     sparse_hits = bm25.search(expanded["sparse_query"], top_k=20)
-    candidates = reciprocal_rank_fusion([dense_hits, sparse_hits], top_k=20)
+    graph_hits = graph_retriever.search(query, top_k=20)
+
+    candidates = reciprocal_rank_fusion(
+        [dense_hits, sparse_hits, graph_hits], top_k=20
+    )
     child_results = reranker.rerank(query, candidates, top_k=10)
     results = map_to_parents(child_results, top_k=3)
 
